@@ -93,7 +93,7 @@ def load_github_issues(repository):
     for state in ('open', 'closed'):
         data = github_api_call(GITHUB_API_ISSUES_LIST % dict(repos=repository),
                                state=state)
-        print "Fetched %s issues" % state
+        print "Fetched %d %s issues" % (len(data), state)
         for issue in data:
             issue['labels'] = map(operator.itemgetter('name'), issue['labels'])
             issues[issue['number']] = issue
