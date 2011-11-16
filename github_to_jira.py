@@ -80,7 +80,7 @@ def get_labels(repository, issue):
     """
     Get a list of all the labels associated with this issue.
     """
-    return issue['labels']
+    return map(operator.itemgetter('name'), issue['labels'])
 
 def load_github_issues(repository):
     """
@@ -95,7 +95,6 @@ def load_github_issues(repository):
                                state=state)
         print "Fetched %d %s issues" % (len(data), state)
         for issue in data:
-            issue['labels'] = map(operator.itemgetter('name'), issue['labels'])
             issues[issue['number']] = issue
     return issues
 
