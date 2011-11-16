@@ -21,8 +21,8 @@ def dateparse(s):
     return time.strptime(s, "%Y-%m-%dT%H:%M:%SZ")
 
 def github_open_api(full,
-                   username=os.getenv('GITHUB_USERNAME'),
-                   password=os.getenv('GITHUB_PASSWORD')):
+                    username=os.getenv('GITHUB_USERNAME'),
+                    password=os.getenv('GITHUB_PASSWORD')):
     request = urllib2.Request(full)
     if username:
         auth = base64.encodestring(':'.join((username, password))).strip('\n')
