@@ -4,41 +4,59 @@ import base64
 import collections
 import csv
 import itertools as it
+import operator
 import os
+import re
 import sys
-from time import sleep
+import time
 import urllib2
 
-from dateutil.parser import parse as dateparse
 import simplejson
 
-GITHUB_API = 'https://github.com/api/v2/json/%s'
-GITHUB_ISSUES_LIST = "issues/list/%s/%s"
-GITHUB_ISSUES_COMMENTS = "issues/comments/%s/%s"
+GITHUB_API_BASE = 'https://api.github.com'
+GITHUB_API_ISSUES_LIST = "/repos/%(repos)s/issues"
+GITHUB_API_ISSUES_COMMENTS = "/repos/%(repos)s/issues/%(issueid)s/comments"
 
-def github_open_api(call,
+def dateparse(s):
+    return time.strptime(s, "%Y-%m-%dT%H:%M:%SZ")
+
+def github_open_api(full,
                    username=os.getenv('GITHUB_USERNAME'),
                    password=os.getenv('GITHUB_PASSWORD')):
-    request = urllib2.Request(GITHUB_API % (call,))
+    request = urllib2.Request(full)
     if username:
         auth = base64.encodestring(':'.join((username, password))).strip('\n')
         request.add_header('Authorization', 'Basic ' + auth)
     return urllib2.urlopen(request)
 
-def github_api_call(call):
-    """
-    Make a call to the Github API
-    """
+def github_api_call_raw(raw):
     try:
-        return simplejson.load(github_open_api(call))
+        r = github_open_api(raw)
     except urllib2.HTTPError as e:
         if e.code == 403:
             # hit the rate limit - wait 60 seconds then retry
             print >>sys.stderr, "Hit the rate limit, waiting 60 seconds..."
-            sleep(60)
-            return github_api_call(call)
+            time.sleep(60)
+            return github_api_call_raw(raw)
         else:
             raise
+    links = r.headers.getheader('Link')
+    data = simplejson.load(r)
+    if links:
+        match = re.search(r'<([^>]+)>; rel="next"', links)
+        if match:
+            data.extend(github_api_call_raw(match.group(1)))
+    return data
+
+def github_api_call(call, per_page='100', **kwargs):
+    """
+    Make a call to the Github API
+    """
+    kwargs['per_page'] = per_page
+    raw = '%s%s?%s' % (GITHUB_API_BASE,
+                       call,
+                       '&'.join('='.join(e) for e in kwargs.iteritems()))
+    return github_api_call_raw(raw)
 
 def get_num_comments(issue):
     return issue['comments']
@@ -51,14 +69,11 @@ def get_comments(repository, issue):
     Get a list of all the comments for this issue as dictionaries.
     """
     print "Fetching comments for issue %d..." % issue['number']
-    comments = []
-    data = github_api_call(GITHUB_ISSUES_COMMENTS %
-                                               (repository, issue['number']))
-    for comment in data['comments']:
-        comments.append({
-            'created_at': dateparse(comment['created_at']),
-            'body': comment['body'],
-        })
+    comments = github_api_call(GITHUB_API_ISSUES_COMMENTS %
+                                               dict(repos=repository,
+                                                    issueid=issue['number']))
+    for comment in comments:
+        comment['created_at'] = dateparse(comment['created_at'])
     return comments
 
 def get_labels(repository, issue):
@@ -76,10 +91,11 @@ def load_github_issues(repository):
     """
     issues = {}
     for state in ('open', 'closed'):
-        data = github_api_call(GITHUB_ISSUES_LIST % (repository, state))
+        data = github_api_call(GITHUB_API_ISSUES_LIST % dict(repos=repository),
+                               state=state)
         print "Fetched %s issues" % state
-        for issue in data['issues']:
-            issue['created_at'] = dateparse(issue['created_at'])
+        for issue in data:
+            issue['labels'] = map(operator.itemgetter('name'), issue['labels'])
             issues[issue['number']] = issue
     return issues
 
@@ -121,7 +137,7 @@ def write_jira_csv(fd, repository):
     headers += comment_headers
     issue_writer.writerow(headers)
     known_attr_parsers = dict(
-            created_at=lambda x: x.strftime('%Y/%m/%d %H:%M'))
+            created_at=lambda x: time.strftime('%Y/%m/%d %H:%M', dateparse(x)))
     all_attr_parsers = collections.defaultdict(lambda: lambda x: x,
                                                known_attr_parsers)
     for issue in issues:
